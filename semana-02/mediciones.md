@@ -6,8 +6,8 @@
 ## Paso 1 — Línea base
 | Métrica | Valor |
 |---|---|
-| RTT ping (promedio) | ___ ms |
-| Throughput iperf3 | ___ Gbit/s |
+| RTT ping (promedio) | = 0.062/ms |
+| Throughput iperf3 | 22.7 Gbits/sec|
 
 ## Pasos 2 y 3 — Latencia inyectada (100 llamadas)
 | Latencia `tc` | Total (s) | Promedio (ms) | Máx (ms) | ¿Esperado? (sí/no, por qué) |
