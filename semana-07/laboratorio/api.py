@@ -1,23 +1,10 @@
-"""Puerta HTTP (API REST) delante del servidor TCP de la Semana 6.
+"""API REST para el servicio de mensajería de la Semana 6.
 
-Cada peticion HTTP se TRADUCE a una linea del protocolo de texto, se envia
-al servidor TCP y la respuesta se traduce de vuelta a JSON y a un codigo HTTP.
-
-    GET  /items                  ->  LISTAR
-    GET  /items/{item}           ->  LISTAR (y se filtra)
-    POST /items/{item}/entradas  ->  AGREGAR <item> <cantidad>
-    POST /items/{item}/salidas   ->  QUITAR  <item> <cantidad>
-
-Plantilla del laboratorio, dominio de referencia INVENTARIO. Cada equipo
-reemplaza los recursos por los de su dominio y mantiene la estructura
-    pedir()     habla con el servidor TCP  (no se toca)
-    traducir()  convierte OK / ERROR en datos o en un codigo HTTP  (no se toca)
-    ERRORES     tabla codigo del protocolo -> codigo HTTP  (se adapta)
-    recursos    una funcion por operacion expuesta  (se adapta)
-
-La API NO guarda nada. Todo el estado sigue viviendo en el servidor TCP.
+La API traduce solicitudes HTTP a líneas del protocolo TCP. El estado sigue
+viviendo en el servidor, así que api1 y api2 comparten usuarios y mensajes.
 """
 import os
+import re
 import socket
 
 from fastapi import FastAPI, HTTPException, Path
@@ -28,83 +15,140 @@ SERVIDOR_PUERTO = int(os.environ.get("SERVIDOR_PUERTO", "5000"))
 TIMEOUT_SERVIDOR = float(os.environ.get("TIMEOUT_SERVIDOR", "3"))
 REPLICA = os.environ.get("REPLICA", socket.gethostname())
 
-app = FastAPI(title="API de inventario", version="1.0",
-              description="Puerta HTTP del servicio propio. Semana 7.")
+app = FastAPI(
+    title="API de mensajería",
+    version="1.0",
+    description="Puerta HTTP del servicio TCP de mensajería de SD-Jaune-Asencio.",
+)
 
-ITEM = Path(pattern=r"^[a-z0-9_]{1,30}$", description="nombre del item, sin espacios")
-
-# Codigo de error del protocolo de texto  ->  codigo de estado HTTP
+USUARIO = Path(pattern=r"^[a-zA-Z0-9_]{1,30}$", description="nombre de usuario")
 ERRORES = {
-    "ITEM_NO_EXISTE": 404,          # el recurso no existe
-    "STOCK_INSUFICIENTE": 409,      # la peticion es valida pero choca con el estado actual
-    "FORMATO": 400,                 # la peticion esta mal armada
-    "COMANDO_DESCONOCIDO": 501,     # el servidor no implementa esa operacion
+    "USUARIO_NO_EXISTE": 404,
+    "USUARIO_EXISTE": 409,
+    "SIN_MENSAJES": 409,
+    "FORMATO": 400,
+    "COMANDO_DESCONOCIDO": 501,
 }
 
 
-class Movimiento(BaseModel):
-    cantidad: int = Field(gt=0, description="unidades, entero mayor que cero")
+class UsuarioNuevo(BaseModel):
+    usuario: str = Field(pattern=r"^[a-zA-Z0-9_]{1,30}$")
 
 
-# ----------------------------------------------------------------- hablar con el nivel de datos
+class MensajeNuevo(BaseModel):
+    origen: str = Field(pattern=r"^[a-zA-Z0-9_]{1,30}$")
+    destino: str = Field(pattern=r"^[a-zA-Z0-9_]{1,30}$")
+    texto: str = Field(min_length=1)
+
+
+class Lectura(BaseModel):
+    cantidad: int = Field(gt=0)
+
+
 def pedir(linea: str) -> str:
-    """Envia UNA linea al nivel de datos y devuelve UNA linea de respuesta."""
+    """Envía una operación al servidor TCP y devuelve su respuesta."""
     try:
-        with socket.create_connection((SERVIDOR_HOST, SERVIDOR_PUERTO),
-                                      timeout=TIMEOUT_SERVIDOR) as s:
-            s.sendall((linea + "\n").encode("utf-8"))
-            respuesta = s.makefile("r", encoding="utf-8").readline().strip()
+        with socket.create_connection(
+            (SERVIDOR_HOST, SERVIDOR_PUERTO), timeout=TIMEOUT_SERVIDOR
+        ) as conexion:
+            conexion.sendall((linea + "\n").encode("utf-8"))
+            respuesta = conexion.makefile("r", encoding="utf-8").readline().strip()
     except socket.timeout:
-        raise HTTPException(504, {"error": "SERVIDOR_NO_RESPONDE", "replica": REPLICA})
-    except OSError as e:                     # no resuelve el nombre, conexion rechazada, red caida
-        raise HTTPException(503, {"error": "SERVIDOR_NO_DISPONIBLE",
-                                  "detalle": e.__class__.__name__, "replica": REPLICA})
+        raise HTTPException(
+            504, {"error": "SERVIDOR_NO_RESPONDE", "replica": REPLICA}
+        )
+    except OSError as error:
+        raise HTTPException(
+            503,
+            {
+                "error": "SERVIDOR_NO_DISPONIBLE",
+                "detalle": error.__class__.__name__,
+                "replica": REPLICA,
+            },
+        )
     if not respuesta:
-        raise HTTPException(503, {"error": "SERVIDOR_CERRO_LA_CONEXION", "replica": REPLICA})
+        raise HTTPException(
+            503, {"error": "SERVIDOR_CERRO_LA_CONEXION", "replica": REPLICA}
+        )
     return respuesta
 
 
 def traducir(respuesta: str) -> list[str]:
-    """'OK a b c' -> ['a','b','c'].  'ERROR CODIGO detalle' -> excepcion HTTP."""
+    """Convierte las respuestas del protocolo de texto a datos o errores HTTP."""
     partes = respuesta.split()
-    if partes[0] == "OK":
+    if partes and partes[0] == "OK":
         return partes[1:]
     codigo = partes[1] if len(partes) > 1 else "DESCONOCIDO"
-    raise HTTPException(ERRORES.get(codigo, 500),
-                        {"error": codigo, "detalle": " ".join(partes[2:]), "replica": REPLICA})
+    detalle = " ".join(partes[2:])
+    raise HTTPException(
+        ERRORES.get(codigo, 500),
+        {"error": codigo, "detalle": detalle, "replica": REPLICA},
+    )
 
 
-def inventario() -> dict[str, int]:
-    pares = (p.split(":") for p in traducir(pedir("LISTAR")))
-    return {nombre: int(cantidad) for nombre, cantidad in pares}
+def bandeja(respuesta: str) -> dict:
+    """Lee la respuesta BANDEJA conservando el texto de los mensajes."""
+    if not respuesta.startswith("OK "):
+        traducir(respuesta)
+    coincidencia = re.fullmatch(
+        r"OK ([^ ]+) pendientes:(\d+)(?: (.*))?", respuesta
+    )
+    if coincidencia is None:
+        raise HTTPException(502, {"error": "RESPUESTA_INVALIDA", "replica": REPLICA})
+    nombre, pendientes, mensajes = coincidencia.groups()
+    return {
+        "usuario": nombre,
+        "pendientes": int(pendientes),
+        "mensajes": mensajes or "",
+        "replica": REPLICA,
+    }
 
 
-# ----------------------------------------------------------------- recursos
 @app.get("/salud")
 def salud():
     return {"estado": "ok", "replica": REPLICA}
 
 
-@app.get("/items")
-def listar_items():
-    return {"items": inventario(), "replica": REPLICA}
+@app.get("/usuarios")
+def listar_usuarios():
+    usuarios = {}
+    for par in traducir(pedir("USUARIOS")):
+        nombre, pendientes = par.split(":", 1)
+        usuarios[nombre] = int(pendientes)
+    return {"usuarios": usuarios, "replica": REPLICA}
 
 
-@app.get("/items/{item}")
-def ver_item(item: str = ITEM):
-    items = inventario()
-    if item not in items:
-        raise HTTPException(404, {"error": "ITEM_NO_EXISTE", "replica": REPLICA})
-    return {"item": item, "cantidad": items[item], "replica": REPLICA}
+@app.get("/usuarios/{usuario}/bandeja")
+def ver_bandeja(usuario: str = USUARIO):
+    return bandeja(pedir(f"BANDEJA {usuario}"))
 
 
-@app.post("/items/{item}/entradas", status_code=201)
-def registrar_entrada(mov: Movimiento, item: str = ITEM):
-    nombre, total = traducir(pedir(f"AGREGAR {item} {mov.cantidad}"))
-    return {"item": nombre, "cantidad": int(total), "replica": REPLICA}
+@app.post("/usuarios", status_code=201)
+def registrar_usuario(nuevo: UsuarioNuevo):
+    nombre, pendientes = traducir(pedir(f"REGISTRAR {nuevo.usuario}"))
+    return {"usuario": nombre, "pendientes": int(pendientes), "replica": REPLICA}
 
 
-@app.post("/items/{item}/salidas", status_code=201)
-def registrar_salida(mov: Movimiento, item: str = ITEM):
-    nombre, total = traducir(pedir(f"QUITAR {item} {mov.cantidad}"))
-    return {"item": nombre, "cantidad": int(total), "replica": REPLICA}
+@app.post("/mensajes", status_code=201)
+def enviar_mensaje(mensaje: MensajeNuevo):
+    if not mensaje.texto.strip():
+        raise HTTPException(422, {"error": "TEXTO_VACIO", "replica": REPLICA})
+    destino, pendientes = traducir(
+        pedir(f"ENVIAR {mensaje.origen} {mensaje.destino} {mensaje.texto}")
+    )
+    return {"destino": destino, "pendientes": int(pendientes), "replica": REPLICA}
+
+
+@app.post("/usuarios/{usuario}/lecturas")
+def leer_mensajes(cantidad: Lectura, usuario: str = USUARIO):
+    respuesta = pedir(f"LEER {usuario} {cantidad.cantidad}")
+    partes = traducir(respuesta)
+    if len(partes) < 2:
+        raise HTTPException(502, {"error": "RESPUESTA_INVALIDA", "replica": REPLICA})
+    mensajes = respuesta.split(" ", 3)[3] if len(respuesta.split(" ", 3)) == 4 else ""
+    return {
+        "usuario": partes[0],
+        "pendientes": int(partes[1]),
+        "mensajes": mensajes,
+        "replica": REPLICA,
+    }
