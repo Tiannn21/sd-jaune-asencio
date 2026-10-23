@@ -1,0 +1,110 @@
+# Semana 9 — mensajería de la semana 7, con codec intercambiable.
+# api1, api2, api3 y nginx quedan como estaban. Lo nuevo es CODEC
+# en servidor, cliente y las API.
+#
+#   docker compose up -d --build
+#   docker compose exec cliente python cliente.py HOLA
+#   docker compose exec cliente python cliente_http.py POST /mensajes origen=ana destino=beto "texto=hola semana 9"
+#   CODEC=bin docker compose up -d --force-recreate servidor cliente api1 api2 api3
+services:
+  servidor:
+    build: .
+    container_name: sd_servidor
+    command: python servidor.py
+    volumes:
+      - ./:/app
+    environment:
+      - CODEC=${CODEC:-json}
+      - SERVIDOR_PUERTO=5000
+      - TIMEOUT_SERVIDOR=30
+      - SIN_LOCK=${SIN_LOCK:-0}
+    networks:
+      - sd_net
+
+  api1:
+    build: .
+    container_name: sd_api1
+    command: uvicorn api:app --host 0.0.0.0 --port 8000
+    volumes:
+      - ./:/app
+    environment:
+      - REPLICA=api1
+      - SERVIDOR_HOST=servidor
+      - SERVIDOR_PUERTO=5000
+      - TIMEOUT_SERVIDOR=3
+      - CODEC=${CODEC:-json}
+    networks:
+      - sd_net
+    depends_on:
+      - servidor
+
+  api2:
+    build: .
+    container_name: sd_api2
+    command: uvicorn api:app --host 0.0.0.0 --port 8000
+    volumes:
+      - ./:/app
+    environment:
+      - REPLICA=api2
+      - SERVIDOR_HOST=servidor
+      - SERVIDOR_PUERTO=5000
+      - TIMEOUT_SERVIDOR=3
+      - CODEC=${CODEC:-json}
+    networks:
+      - sd_net
+    depends_on:
+      - servidor
+
+  api3:
+    build: .
+    container_name: sd_api3
+    command: uvicorn api:app --host 0.0.0.0 --port 9000
+    volumes:
+      - ./:/app
+    environment:
+      - REPLICA=api3
+      - SERVIDOR_HOST=servidor
+      - SERVIDOR_PUERTO=5000
+      - TIMEOUT_SERVIDOR=3
+      - CODEC=${CODEC:-json}
+    networks:
+      - sd_net
+    depends_on:
+      - servidor
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: sd_nginx
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+    ports:
+      - "8080:80"
+    networks:
+      - sd_net
+    depends_on:
+      - api1
+      - api2
+      - api3
+
+  cliente:
+    build: .
+    container_name: sd_cliente
+    command: sleep infinity
+    stdin_open: true
+    tty: true
+    volumes:
+      - ./:/app
+    environment:
+      - API_URL=http://nginx
+      - CODEC=${CODEC:-json}
+      - SERVIDOR_HOST=servidor
+      - SERVIDOR_PUERTO=5000
+      - TIMEOUT_CLIENTE=5
+    networks:
+      - sd_net
+    depends_on:
+      - nginx
+
+networks:
+  sd_net:
+    name: sd_net
