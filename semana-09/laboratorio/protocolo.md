@@ -143,7 +143,16 @@ Si el cliente se desconecta a mitad de un mensaje, ese hilo cierra solo esa cone
 
 ## 7. Medición de codecs
 
-Pendiente: pegar aquí la tabla que imprime `bench_codec.py` y una conclusión de dos líneas.
+Salida de `python bench_codec.py 10000` (10000 solicitudes y 10000 respuestas del dominio de mensajería):
+
+| Mensaje   | Codec | Bytes promedio | Bytes totales | Codificar (ms) | Decodificar (ms) |
+| --------- | ----- | -------------: | ------------: | -------------: | ---------------: |
+| Solicitud | json  |           80.1 |        800798 |           45.6 |             21.8 |
+| Solicitud | bin   |           26.0 |        259748 |           40.4 |             13.5 |
+| Respuesta | json  |           74.2 |        742117 |           44.4 |             23.0 |
+| Respuesta | bin   |           26.3 |        263227 |           11.3 |             13.3 |
+
+El binario ocupa 68% menos en la solicitud (80 B contra 26 B) y 65% menos en la respuesta (74 B contra 26 B), y codifica y decodifica en menos tiempo. A cambio el cuerpo no se puede leer y exige que los dos lados coincidan en el orden y el largo de cada campo.
 
 ## 8. Historial de cambios
 
