@@ -1,138 +1,122 @@
-"""
-Objetos remotos del servicio, semana 12.
-
-Aquí el dominio deja de exponerse como funciones sueltas (gRPC, JSON-RPC) y
-pasa a exponerse como OBJETOS que viven en el servidor.
-
-  Inventario  objeto de entrada, se registra en el servidor de nombres.
-              Delega en dominio.py y además fabrica objetos Pedido.
-  Pedido      objeto con estado propio (sus líneas). No se registra con
-              nombre, el cliente lo recibe POR REFERENCIA desde
-              Inventario.abrir_pedido().
-
-Variables
-  MODO       single | session | percall   modo de instancia del Inventario
-  POR_VALOR  0 | 1   con 1, abrir_pedido devuelve el Pedido sin registrarlo
-             en el daemon (experimento, el cliente recibe un error)
-
-El equipo reemplaza Inventario y Pedido por los objetos de su dominio.
-"""
+"""Objetos remotos del chat; las reglas permanecen en dominio.py."""
 import os
 import threading
-import time
-
-from Pyro5.api import behavior, current_context, expose
-
+from Pyro5.api import behavior, expose
 import dominio
 
 MODO = os.environ.get("MODO", "single")
 POR_VALOR = os.environ.get("POR_VALOR", "0") == "1"
-
-_contador_instancias = 0
-_lock_contador = threading.Lock()
-
-
-def _nueva_instancia():
-    global _contador_instancias
-    with _lock_contador:
-        _contador_instancias += 1
-        return _contador_instancias
+_numero = 0
+_lock = threading.Lock()
 
 
 @expose
-class Pedido:
-    """Pedido en curso. Su estado (las líneas) vive en el servidor.
+class Conversacion:
+    """Borrador remoto entre dos usuarios; termina al confirmar o cancelar."""
+    def __init__(self, origen, destino):
+        self.origen, self.destino = origen, destino
+        self.texto = ""
+        self._cerrada = False
+        self._lock = threading.RLock()
 
-    El cliente nunca tiene una copia, tiene una referencia remota (un proxy).
-    Al confirmar o cancelar, el pedido se desregistra del daemon y cualquier
-    referencia que quede apuntando a él pasa a ser una referencia colgante.
-    """
+    def __getstate__(self):
+        # El experimento por valor debe serializar datos, nunca el lock local.
+        return {"origen": self.origen, "destino": self.destino, "texto": self.texto}
 
-    def __init__(self, cliente):
-        self.cliente = cliente
-        self.lineas = []
-        self.creado = time.strftime("%H:%M:%S")
+    def _activa(self):
+        if self._cerrada:
+            raise dominio.ErrorDominio("CONVERSACION_CERRADA")
 
-    def agregar(self, producto, cantidad):
-        """Agrega una línea al pedido. Todavía no toca el stock."""
-        if cantidad <= 0:
-            raise dominio.ErrorParametros("cantidad debe ser mayor que cero")
-        self.lineas.append((producto, cantidad))
-        return len(self.lineas)
+    def agregar(self, texto):
+        """Cambia el borrador sin enviar; reemplaza el texto anterior."""
+        with self._lock:
+            self._activa()
+            if not isinstance(texto, str) or not texto.strip():
+                raise dominio.ErrorParametros("texto vacío")
+            self.texto = texto
+            return self.ver()
 
     def ver(self):
-        """Devuelve una copia (por valor) del estado del pedido."""
-        return {"cliente": self.cliente, "creado": self.creado,
-                "lineas": [list(l) for l in self.lineas]}
+        """Consulta una copia de participantes y borrador; no cambia estado."""
+        with self._lock:
+            self._activa()
+            return {"participantes": [self.origen, self.destino], "texto": self.texto}
 
     def confirmar(self):
-        """Descuenta el stock de todas las líneas y termina la vida del objeto."""
-        resultado = dominio.quitar_varios(self.lineas)
-        self._terminar()
-        return resultado
+        """Cambia el buzón con un envío y desregistra esta conversación."""
+        with self._lock:
+            self._activa()
+            resultado = dominio.enviar(self.origen, self.destino, self.texto)
+            self._terminar()
+            return resultado
 
     def cancelar(self):
-        """Termina la vida del objeto sin tocar el stock."""
-        self._terminar()
-        return "cancelado"
+        """Cambia el ciclo de vida: desregistra sin enviar."""
+        with self._lock:
+            self._activa()
+            self._terminar()
+            return "cancelada"
 
     def _terminar(self):
-        # Desregistrar es el fin del ciclo de vida. Desde aquí, la URI de
-        # este objeto ya no existe en el daemon.
+        self._cerrada = True
         self._pyroDaemon.unregister(self)
 
 
 @expose
 @behavior(instance_mode=MODO)
-class Inventario:
-    """Objeto de entrada del servicio. Se publica en el servidor de nombres."""
-
+class Directorio:
+    """Entrada al chat: operaciones del dominio y fábrica de conversaciones."""
     def __init__(self):
-        self.numero = _nueva_instancia()
+        global _numero
+        with _lock:
+            _numero += 1
+            self.numero = _numero
         self.llamadas = 0
+        self._lock = threading.Lock()
 
     def _contar(self):
-        self.llamadas += 1
+        with self._lock:
+            self.llamadas += 1
+            return self.llamadas
 
-    def listar(self):
+    def usuarios(self):
+        """Consulta usuarios; solo cambia el contador de telemetría."""
         self._contar()
-        return dominio.listar()
+        return dominio.usuarios()
 
-    def agregar(self, producto, cantidad):
+    def registrar(self, usuario):
+        """Cambia estado: crea un usuario con cero pendientes."""
         self._contar()
-        return dominio.agregar(producto, cantidad)
+        return dominio.registrar(usuario)
 
-    def quitar(self, producto, cantidad):
+    def enviar(self, origen, destino, texto):
+        """Cambia estado: añade un mensaje y un pendiente al destino."""
         self._contar()
-        return dominio.quitar(producto, cantidad)
+        return dominio.enviar(origen, destino, texto)
+
+    def leer(self, usuario, cantidad):
+        """Cambia estado: retira textos FIFO y descuenta pendientes."""
+        self._contar()
+        return dominio.leer(usuario, cantidad)
 
     def quien_soy(self):
-        """Cuenta qué instancia atendió la llamada y cuántas lleva.
+        """Consulta identidad y cambia únicamente el contador de llamadas."""
+        return {"modo": MODO, "instancia": self.numero, "llamadas": self._contar()}
 
-        Sirve para ver el modo de instancia. El stock vive en dominio.py y
-        es el mismo para todas las instancias.
-        """
+    def conversaciones_vivas(self):
+        """Consulta objetos vivos; solo cambia el contador de telemetría."""
         self._contar()
-        return {"modo": MODO, "instancia": self.numero, "llamadas": self.llamadas,
-                "cliente": str(current_context.client_sock_addr)}
+        return sum(isinstance(o, Conversacion) for o in list(self._pyroDaemon.objectsById.values()))
 
-    def pedidos_vivos(self):
-        """Cuántos objetos Pedido siguen registrados en el daemon.
-
-        Un pedido que nadie confirma ni cancela queda vivo para siempre.
-        Pyro5 no tiene recolector de basura distribuido.
-        """
+    def abrir_conversacion(self, origen, destino):
+        """Cambia estado: crea un borrador devuelto por referencia."""
         self._contar()
-        return sum(1 for o in self._pyroDaemon.objectsById.values()
-                   if isinstance(o, Pedido))
-
-    def abrir_pedido(self, cliente):
-        """Fábrica. Crea un Pedido en el servidor y entrega una referencia."""
-        self._contar()
-        pedido = Pedido(cliente)
-        if POR_VALOR:
-            # Experimento. Sin registrar, Pyro5 intenta enviar el objeto
-            # serializado (por valor) y el cliente lo rechaza.
-            return pedido
-        self._pyroDaemon.register(pedido)
-        return pedido  # autoproxy, viaja como referencia remota
+        origen = dominio._usuario(origen, "origen")
+        destino = dominio._usuario(destino, "destino")
+        usuarios = dominio.usuarios()
+        if origen not in usuarios or destino not in usuarios:
+            raise dominio.ErrorDominio("USUARIO_NO_EXISTE")
+        conversacion = Conversacion(origen, destino)
+        if not POR_VALOR:
+            self._pyroDaemon.register(conversacion)
+        return conversacion

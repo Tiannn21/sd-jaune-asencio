@@ -1,18 +1,6 @@
-"""
-Cliente Pyro5 del servicio, semana 12.
-
-Uso (dentro del contenedor cliente, o con Python local)
-  python cliente_pyro.py uri
-  python cliente_pyro.py listar
-  python cliente_pyro.py agregar cafe 10
-  python cliente_pyro.py quitar cafe 3
-  python cliente_pyro.py quien --veces 3
-  python cliente_pyro.py pedido cafe:2 te:1 [--esperar 30]
-  python cliente_pyro.py vivos
-  python cliente_pyro.py vigilar [--cada 1]
-
-Variables
-  NOMBRES_HOST (nombres)  NOMBRES_PUERTO (9090)  EQUIPO (referencia)
+"""CLI del chat: uri, usuarios/listar, registrar, enviar, leer, conversacion,
+quien, vivos y vigilar. No reintenta escrituras: una respuesta perdida puede
+corresponder a un mensaje ya enviado. Usar --help para ver argumentos.
 """
 import argparse
 import os
@@ -26,7 +14,7 @@ from Pyro5.errors import (CommunicationError, DaemonError, NamingError,
 NS_HOST = os.environ.get("NOMBRES_HOST", "nombres")
 NS_PUERTO = int(os.environ.get("NOMBRES_PUERTO", "9090"))
 EQUIPO = os.environ.get("EQUIPO", "referencia")
-NOMBRE = f"sd.{EQUIPO}.inventario"
+NOMBRE = f"sd.{EQUIPO}.directorio"
 
 
 # Las excepciones también viajan serializadas (por valor). Pyro5 solo sabe
@@ -47,8 +35,8 @@ def log(msg):
     print(time.strftime("%H:%M:%S"), msg, flush=True)
 
 
-def inventario():
-    """Proxy al Inventario. La URI se resuelve en el servidor de nombres."""
+def directorio():
+    """Proxy al Directorio. La URI se resuelve en el servidor de nombres."""
     proxy = Proxy(f"PYRONAME:{NOMBRE}@{NS_HOST}:{NS_PUERTO}")
     proxy._pyroTimeout = 5
     return proxy
@@ -61,82 +49,64 @@ def cmd_uri(_):
 
 
 def cmd_listar(_):
-    with inventario() as inv:
-        log(f"stock {inv.listar()}")
+    with directorio() as inv:
+        log(f"usuarios {inv.usuarios()}")
 
 
-def cmd_agregar(a):
-    with inventario() as inv:
-        log(f"agregar -> {inv.agregar(a.producto, a.cantidad)}")
+def cmd_registrar(a):
+    with directorio() as inv:
+        log(f"registrar -> {inv.registrar(a.usuario)}")
 
 
-def cmd_quitar(a):
-    with inventario() as inv:
-        log(f"quitar -> {inv.quitar(a.producto, a.cantidad)}")
+def cmd_enviar(a):
+    with directorio() as inv:
+        log(f"enviar -> {inv.enviar(a.origen, a.destino, a.texto)}")
+
+
+def cmd_leer(a):
+    with directorio() as inv:
+        log(f"leer -> {inv.leer(a.usuario, a.cantidad)}")
 
 
 def cmd_quien(a):
     """Mismo proxy varias veces y después un proxy nuevo. Muestra el modo."""
     for etiqueta in ("proxy A", "proxy B"):
-        with inventario() as inv:
+        with directorio() as inv:
             for _ in range(a.veces):
                 log(f"{etiqueta} -> {inv.quien_soy()}")
 
 
 def cmd_vivos(_):
-    with inventario() as inv:
-        log(f"pedidos vivos en el servidor {inv.pedidos_vivos()}")
+    with directorio() as inv:
+        log(f"conversaciones vivas en el servidor {inv.conversaciones_vivas()}")
 
 
-def reintentar_confirmar(uri, segundos):
-    """Vuelve a llamar confirmar() sobre la misma URI hasta que el servidor
-    conteste. Si contesta 'unknown object', no tiene sentido seguir."""
-    limite = time.time() + segundos
-    while True:
-        try:
-            with Proxy(uri) as pedido:
-                return pedido.confirmar()
-        except CommunicationError as e:
-            if "unknown object" in str(e) or time.time() > limite:
-                raise
-            time.sleep(1)
-
-
-def cmd_pedido(a):
-    lineas = []
-    for item in a.lineas:
-        producto, _, cantidad = item.partition(":")
-        if not (cantidad or "1").isdigit():
-            log(f"ERROR de uso. Las líneas van como producto:cantidad, recibí {item}")
-            sys.exit(1)
-        lineas.append((producto, int(cantidad or 1)))
-    with inventario() as inv:
-        pedido = inv.abrir_pedido(os.environ.get("HOSTNAME", "cliente"))
-        pedido._pyroTimeout = 5
-        log(f"recibí {type(pedido).__name__}, referencia {pedido._pyroUri}")
-        for producto, cantidad in lineas:
-            pedido.agregar(producto, cantidad)
-        log(f"estado en el servidor {pedido.ver()}")
-        if a.esperar:
-            log(f"espero {a.esperar} s antes de confirmar (momento para la falla)")
-            time.sleep(a.esperar)
-        try:
-            resultado = pedido.confirmar()
-        except CommunicationError as e:
-            log(f"se cortó la conexión ({type(e).__name__}). Reintento con la "
-                "MISMA referencia durante 30 s, levanten el servidor")
-            resultado = reintentar_confirmar(pedido._pyroUri, 30)
-        log(f"confirmar -> {resultado}")
-        log("uso la referencia después de confirmar")
-        pedido.ver()
+def cmd_conversacion(a):
+    with directorio() as inv:
+        conversacion = inv.abrir_conversacion(a.origen, a.destino)
+        with conversacion:
+            conversacion._pyroTimeout = 5
+            log(f"recibí {type(conversacion).__name__}, referencia {conversacion._pyroUri}")
+            conversacion.agregar(a.texto)
+            log(f"estado en el servidor {conversacion.ver()}")
+            if a.esperar:
+                log(f"espero {a.esperar} s antes de confirmar")
+                time.sleep(a.esperar)
+            if a.cancelar:
+                log(f"cancelar -> {conversacion.cancelar()}")
+            else:
+                log(f"confirmar -> {conversacion.confirmar()}")
+            if a.probar_colgante:
+                log("uso la referencia después de terminar")
+                conversacion.ver()
 
 
 def cmd_vigilar(a):
     """Llama listar() cada a.cada segundos con el MISMO proxy y reporta fallas."""
-    inv = inventario()
+    inv = directorio()
     while True:
         try:
-            log(f"ok, stock {inv.listar()}  [{inv._pyroUri}]")
+            log(f"ok, usuarios {inv.usuarios()}  [{inv._pyroUri}]")
         except CommunicationError as e:
             log(f"FALLA de comunicación {type(e).__name__} {e}")
             try:
@@ -154,19 +124,31 @@ def main():
     sub = p.add_subparsers(dest="cmd", required=True)
     sub.add_parser("uri").set_defaults(f=cmd_uri)
     sub.add_parser("listar").set_defaults(f=cmd_listar)
-    for nombre, f in (("agregar", cmd_agregar), ("quitar", cmd_quitar)):
-        s = sub.add_parser(nombre)
-        s.add_argument("producto")
-        s.add_argument("cantidad", type=int)
-        s.set_defaults(f=f)
+    sub.add_parser("usuarios").set_defaults(f=cmd_listar)
+    s = sub.add_parser("registrar")
+    s.add_argument("usuario")
+    s.set_defaults(f=cmd_registrar)
+    s = sub.add_parser("enviar")
+    s.add_argument("origen")
+    s.add_argument("destino")
+    s.add_argument("texto")
+    s.set_defaults(f=cmd_enviar)
+    s = sub.add_parser("leer")
+    s.add_argument("usuario")
+    s.add_argument("cantidad", type=int)
+    s.set_defaults(f=cmd_leer)
     sub.add_parser("vivos").set_defaults(f=cmd_vivos)
     s = sub.add_parser("quien")
     s.add_argument("--veces", type=int, default=3)
     s.set_defaults(f=cmd_quien)
-    s = sub.add_parser("pedido")
-    s.add_argument("lineas", nargs="+", help="producto:cantidad")
-    s.add_argument("--esperar", type=int, default=0)
-    s.set_defaults(f=cmd_pedido)
+    s = sub.add_parser("conversacion")
+    s.add_argument("origen")
+    s.add_argument("destino")
+    s.add_argument("texto")
+    s.add_argument("--esperar", type=float, default=0)
+    s.add_argument("--cancelar", action="store_true")
+    s.add_argument("--probar-colgante", action="store_true")
+    s.set_defaults(f=cmd_conversacion)
     s = sub.add_parser("vigilar")
     s.add_argument("--cada", type=float, default=1)
     s.set_defaults(f=cmd_vigilar)

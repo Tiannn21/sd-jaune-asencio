@@ -1,51 +1,122 @@
-# Semana 12, objetos distribuidos con Pyro5
+# Semana 12: mensajería instantánea con Pyro5
 
-El dominio (`dominio.py`) es el mismo de la semana 11. Lo que cambia es la forma
-de exponerlo, ahora como objetos remotos que viven en el nodo `servidor`.
+Equipo SD-Jaune-Asencio: Diego Jaune y Sebastián Asencio.
 
-| Archivo | Qué es |
-|---|---|
-| `dominio.py` | Reglas del negocio, igual que en `semana11/`. Reemplácenlo por el suyo |
-| `objetos.py` | Clases expuestas `Inventario` (entrada) y `Pedido` (objeto con estado, viaja por referencia) |
-| `servidor_pyro.py` | Daemon de Pyro5, registra `Inventario` en el servidor de nombres |
-| `cliente_pyro.py` | Cliente de línea de comandos con `uri`, `listar`, `agregar`, `quitar`, `quien`, `pedido`, `vivos` y `vigilar` |
-| `docker-compose.yml` | Nodos `nombres`, `servidor` y `cliente` en la red `sd_net` |
-| `.env` | Configuración (`EQUIPO`, `MODO`, `POR_VALOR`, `REREGISTRO`). Es un archivo oculto |
-| `observaciones.md` | Registro del taller, se entrega hoy antes de las 16.00 |
-| `calidad.md` | Lista de verificación antes del push |
+Esta es la entrega del PDF. La carpeta semana-12/demo
+conserva el material de referencia. El dominio se copió exactamente desde
+semana-11/laboratorio/dominio.py: usuarios, registrar, enviar y leer.
 
-## Levantar y probar
+## Levantar y probar en tres comandos
 
-```bash
+Desde esta carpeta, con Docker Desktop activo y sin contenedores de otras semanas:
+
+```powershell
 docker compose up -d --build
-docker compose exec cliente python cliente_pyro.py uri
-docker compose exec cliente python cliente_pyro.py pedido cafe:2
+docker compose exec cliente python cliente_pyro.py conversacion ana beto "hola semana 12"
+docker compose exec cliente python cliente_pyro.py leer beto 1
 ```
 
-Con el alias del curso (`alias c='docker compose exec cliente'`) queda `c python cliente_pyro.py listar`.
+Si el servidor aún se está registrando, esperar dos segundos y repetir la consulta.
+Antes de levantar, bajar el demo desde la raíz:
+`docker compose -f semana-12/demo/docker-compose.yml down`.
+Los nombres sd_servidor, sd_cliente y sd_nombres son compartidos entre ejercicios.
 
-## Variables
+## Cómo funciona
 
-| Variable | Valor por defecto | Para qué |
+1. Directorio se publica como sd.jaune-asencio.directorio.
+2. El cliente consulta nombres:9090 y conecta con servidor:9100.
+3. abrir_conversacion crea un objeto con participantes y borrador en el servidor.
+4. El cliente recibe un Proxy. agregar reemplaza el borrador, sin enviar.
+5. ver devuelve un diccionario por valor: cambiar esa copia no cambia el servidor.
+6. confirmar llama dominio.enviar una vez y desregistra el objeto; cancelar lo
+   desregistra sin enviar. La referencia anterior deja de ser válida.
+
+La conversación del taller representa un intercambio con un único mensaje en borrador.
+No es aún una sala de chat permanente. No hay interfaz gráfica ni autenticación.
+
+## Comandos
+
+```powershell
+function c { docker compose exec cliente @args }
+c python cliente_pyro.py uri
+c python cliente_pyro.py usuarios
+c python cliente_pyro.py registrar carol
+c python cliente_pyro.py enviar ana carol "mensaje directo"
+c python cliente_pyro.py leer carol 1
+c python cliente_pyro.py conversacion ana beto "prueba" --probar-colgante
+c python cliente_pyro.py conversacion ana beto "descartar" --cancelar
+c python cliente_pyro.py vivos
+c python cliente_pyro.py quien --veces 2
+c python pruebas_integracion.py
+```
+
+--probar-colgante produce un error intencional DESPUÉS del envío exitoso.
+Sin esa opción, enviar una conversación termina normalmente.
+
+## Experimentos de configuración
+
+Editar .env y ejecutar `docker compose up -d servidor`; esperar dos segundos.
+Restaurar cada variable al terminar. Cambiar Python exige reconstruir con --build.
+
+| Variable | Valor inicial | Experimento |
 |---|---|---|
-| `EQUIPO` | `referencia` | Nombre lógico `sd.<EQUIPO>.inventario` |
-| `MODO` | `single` | Modo de instancia del `Inventario` (`single`, `session`, `percall`) |
-| `POR_VALOR` | `0` | Con `1`, la fábrica devuelve el objeto sin registrarlo (experimento) |
-| `REREGISTRO` | `0` | Segundos entre re-registros en el servidor de nombres, `0` es nunca |
+| EQUIPO | jaune-asencio | Nombre lógico del equipo |
+| MODO | single | Comparar quien --veces 2 con session |
+| POR_VALOR | 0 | Con 1, abrir una conversación falla al deserializar objetos.Conversacion |
+| REREGISTRO | 0 | Con 5, vuelve a publicar el nombre cada cinco segundos |
 
-Los valores se cambian en el archivo `.env` de esta carpeta (por ejemplo `MODO=session`) y después
-se ejecuta `docker compose up -d servidor`. Así funciona igual en bash y en PowerShell, y las tres
-terminales del paso 5 ven la misma configuración. Para volver, se restaura el valor en `.env` y se
-repite el comando.
+En PowerShell también sirve `$env:MODO='session'` antes de compose.
+Esa variable tiene prioridad sobre .env: quitarla con
+`Remove-Item Env:MODO` al terminar si se usó esta alternativa.
 
-## Sin Docker
+## Falla en tres terminales
 
-```bash
-pip install -r requirements.txt
-export NOMBRES_HOST=127.0.0.1 SERVIDOR_HOST=127.0.0.1
-python -m Pyro5.nameserver -n 127.0.0.1 -p 9090 -x     # terminal 1
-python servidor_pyro.py                                 # terminal 2
-python cliente_pyro.py listar                           # terminal 3
+Todas deben estar en esta carpeta. Configuración single, POR_VALOR=0, REREGISTRO=0.
+
+Terminal 2:
+```powershell
+docker compose exec cliente python cliente_pyro.py vigilar
 ```
 
-En PowerShell las variables se definen con `$env:NOMBRES_HOST="127.0.0.1"`.
+Terminal 3:
+```powershell
+docker compose exec cliente python cliente_pyro.py conversacion ana beto "pendiente" --esperar 30
+```
+
+Terminal 1, mientras espera:
+```powershell
+docker compose kill servidor
+docker compose exec cliente python cliente_pyro.py usuarios
+docker compose start servidor
+```
+
+Esperar a que el observador recupere conexión y termine la conversación pendiente.
+Esta última puede recibir desconexión o unknown object según cuándo se confirme.
+No se reintentan escrituras automáticamente: sin deduplicación durable, una
+respuesta perdida no permite asegurar si el envío ocurrió.
+
+Luego, terminal 1:
+```powershell
+docker compose kill nombres
+docker compose exec cliente python cliente_pyro.py usuarios
+docker compose start nombres
+# Esperar dos segundos.
+docker compose exec cliente python cliente_pyro.py usuarios
+docker compose restart servidor
+# Esperar dos segundos.
+docker compose exec cliente python cliente_pyro.py usuarios
+```
+
+El observador conectado sigue sin nombres. El cliente nuevo necesita resolver.
+Al arrancar nombres, el registro está vacío; reiniciar servidor lo repone.
+Terminar vigilar con Ctrl+C. Limpiar al finalizar con `docker compose down`.
+
+## Límites heredados y decisiones
+
+Ana y Beto empiezan con 100 pendientes y buzones vacíos: son contadores heredados,
+no cien textos reales. Para pruebas realistas usar registrar, que parte de cero.
+El estado se comparte en dominio.py, independientemente del modo de instancia.
+Reiniciar servidor restaura ana=100 y beto=100 y pierde usuarios nuevos y textos.
+Una conversación abandonada queda viva mientras el proceso siga activo: no hay TTL.
+Un fallo de dominio permite corregir o cancelar mediante la misma referencia.
+No se transportó la deduplicación de gRPC; queda como trabajo del integrador.

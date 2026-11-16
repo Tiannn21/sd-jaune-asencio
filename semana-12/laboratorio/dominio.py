@@ -1,71 +1,75 @@
 """
-Dominio del servicio. Es el mismo archivo de semana11/.
+Dominio del servicio, sin nada de red. Semana 11.
 
-Este archivo es lo que NO cambia cuando cambia el transporte. Lo usaron
-rpc.py (JSON-RPC, semana 10) y servidor_grpc.py (gRPC, semana 11), y ahora
-lo usa objetos.py (Pyro5, semana 12).
-
-El equipo reemplaza este inventario de referencia por el dominio.py de su
-propio semana11/, sin modificarlo.
+Mensajería instantánea del equipo SD-Jaune-Asencio, las mismas reglas que
+semana10/rpc.py (enviar y leer) más usuarios (lectura) y registrar, la
+operación nueva del trabajo autónomo. Lo usan rpc.py y servidor_grpc.py.
 """
 import threading
 
 _lock = threading.Lock()
-_stock = {}
+_estado = {
+    "usuarios": {"ana": {"pendientes": 100}, "beto": {"pendientes": 100}},
+    "buzon": {"ana": [], "beto": []},
+}
 
 
 class ErrorDominio(Exception):
-    """Regla del negocio que no se cumple, por ejemplo stock insuficiente."""
+    """Regla del negocio que no se cumple, por ejemplo usuario duplicado."""
 
 
 class ErrorParametros(Exception):
     """Parámetros con valor inválido."""
 
 
-def _validar(producto, cantidad):
-    if not producto:
-        raise ErrorParametros("producto vacío")
-    if cantidad <= 0:
-        raise ErrorParametros("cantidad debe ser mayor que cero")
+def _usuario(valor, etiqueta):
+    if not isinstance(valor, str) or not valor.strip() or any(c.isspace() for c in valor.strip()):
+        raise ErrorParametros(f"{etiqueta} debe ser un texto de una sola palabra")
+    return valor.strip().lower()
 
 
-def listar():
+def usuarios():
     with _lock:
-        return dict(_stock)
+        return {nombre: datos["pendientes"] for nombre, datos in sorted(_estado["usuarios"].items())}
 
 
-def agregar(producto, cantidad):
-    _validar(producto, cantidad)
+def enviar(origen, destino, texto):
+    """Guarda el texto en el buzón del destino y suma un pendiente."""
+    origen = _usuario(origen, "origen")
+    destino = _usuario(destino, "destino")
+    if not isinstance(texto, str) or not texto.strip():
+        raise ErrorParametros("texto vacío")
     with _lock:
-        _stock[producto] = _stock.get(producto, 0) + cantidad
-        return {"producto": producto, "stock": _stock[producto]}
+        if origen not in _estado["usuarios"] or destino not in _estado["usuarios"]:
+            raise ErrorDominio("USUARIO_NO_EXISTE")
+        _estado["usuarios"][destino]["pendientes"] += 1
+        _estado["buzon"][destino].append(f"{origen}:{texto}")
+        return {"destino": destino, "pendientes": _estado["usuarios"][destino]["pendientes"]}
 
 
-def quitar(producto, cantidad):
-    _validar(producto, cantidad)
+def leer(usuario, cantidad):
+    """Descuenta pendientes y retira hasta cantidad textos, en orden FIFO."""
+    usuario = _usuario(usuario, "usuario")
+    if type(cantidad) is not int or cantidad <= 0:
+        raise ErrorParametros("cantidad debe ser un entero mayor que cero")
     with _lock:
-        actual = _stock.get(producto, 0)
-        if actual < cantidad:
-            raise ErrorDominio(f"stock insuficiente, hay {actual}")
-        _stock[producto] = actual - cantidad
-        return {"producto": producto, "stock": _stock[producto]}
+        datos = _estado["usuarios"].get(usuario)
+        if datos is None:
+            raise ErrorDominio("USUARIO_NO_EXISTE")
+        if datos["pendientes"] < cantidad:
+            raise ErrorDominio(f"SIN_MENSAJES {datos['pendientes']}")
+        datos["pendientes"] -= cantidad
+        mensajes = _estado["buzon"][usuario][:cantidad]
+        _estado["buzon"][usuario] = _estado["buzon"][usuario][cantidad:]
+        return {"usuario": usuario, "pendientes": datos["pendientes"], "mensajes": mensajes}
 
 
-def quitar_varios(lineas):
-    """Quita varias líneas de una sola vez. Si una falla, no se aplica ninguna.
-
-    lineas es una lista de pares (producto, cantidad).
-    """
-    for producto, cantidad in lineas:
-        _validar(producto, cantidad)
+def registrar(usuario):
+    """Crea un usuario con 0 pendientes y buzón vacío. Falla si ya existe."""
+    usuario = _usuario(usuario, "usuario")
     with _lock:
-        pedido = {}
-        for producto, cantidad in lineas:
-            pedido[producto] = pedido.get(producto, 0) + cantidad
-        for producto, cantidad in pedido.items():
-            actual = _stock.get(producto, 0)
-            if actual < cantidad:
-                raise ErrorDominio(f"stock insuficiente de {producto}, hay {actual}")
-        for producto, cantidad in pedido.items():
-            _stock[producto] -= cantidad
-        return {p: _stock[p] for p in pedido}
+        if usuario in _estado["usuarios"]:
+            raise ErrorDominio("USUARIO_EXISTE")
+        _estado["usuarios"][usuario] = {"pendientes": 0}
+        _estado["buzon"][usuario] = []
+        return {"usuario": usuario, "pendientes": 0}

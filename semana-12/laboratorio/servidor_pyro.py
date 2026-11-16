@@ -2,8 +2,8 @@
 Servidor Pyro5 del servicio, semana 12.
 
 Crea un daemon (el que recibe las llamadas y las despacha a los objetos),
-registra la clase Inventario y la publica en el servidor de nombres con el
-nombre sd.<EQUIPO>.inventario.
+registra la clase Directorio y la publica en el servidor de nombres con el
+nombre sd.<EQUIPO>.directorio.
 
 Variables
   SERVIDOR_HOST    (servidor)   nombre con el que el daemon se anuncia
@@ -22,7 +22,7 @@ import time
 from Pyro5.api import Daemon, locate_ns
 from Pyro5.errors import NamingError
 
-from objetos import MODO, Inventario
+from objetos import MODO, Directorio
 
 HOST = os.environ.get("SERVIDOR_HOST", "servidor")
 PUERTO = int(os.environ.get("SERVIDOR_PUERTO", "9100"))
@@ -30,7 +30,7 @@ NS_HOST = os.environ.get("NOMBRES_HOST", "nombres")
 NS_PUERTO = int(os.environ.get("NOMBRES_PUERTO", "9090"))
 EQUIPO = os.environ.get("EQUIPO", "referencia")
 REREGISTRO = int(os.environ.get("REREGISTRO", "0"))
-NOMBRE = f"sd.{EQUIPO}.inventario"
+NOMBRE = f"sd.{EQUIPO}.directorio"
 
 
 def log(msg):
@@ -62,7 +62,7 @@ def reregistrar_cada(uri, segundos):
 
 def main():
     daemon = Daemon(host=HOST, port=PUERTO)
-    uri = daemon.register(Inventario, objectId="inventario")
+    uri = daemon.register(Directorio, objectId="directorio")
     log(f"daemon escuchando, modo de instancia {MODO}")
     log(f"URI {uri}")
     if not registrar(uri):
