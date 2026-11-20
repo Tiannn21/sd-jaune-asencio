@@ -1,0 +1,3 @@
+mecanismo,operacion,n,p50_ms,p95_ms,media_ms,max_ms,respuesta_bytes
+grpc,usuarios,200,1.42,2.17,1.5,2.71,19
+jsonrpc,usuarios,200,1.11,1.46,1.12,2.96,56
