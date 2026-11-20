@@ -1,6 +1,6 @@
 # Reintento de un envío en los tres mecanismos
 
-Fecha: 20-11-2026. En cada caso el servidor parte del estado inicial (`ana=100`, `beto=100`) y el cliente manda dos veces la misma solicitud de envío, como lo haría un cliente que no recibió la primera respuesta y vuelve a intentar.
+Fecha de recopilación: 20-11-2026. Los casos parten del estado inicial (`ana=100`, `beto=100`). JSON-RPC y Pyro5 muestran dos envíos iguales. Los resultados gRPC se toman del registro de S11: tres intentos sin deduplicación y dos intentos efectivos con deduplicación (el segundo recibió respuesta). Se compara el efecto de repetir un envío; no se afirma igualdad en el número de intentos ni en la inyección de fallos.
 
 ## gRPC (semana 11)
 
