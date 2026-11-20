@@ -1,0 +1,66 @@
+<mxfile host="app.diagrams.net" agent="sd-jaune-asencio" version="24.7.17">
+  <diagram id="arquitectura-grpc" name="Arquitectura gRPC (semana 11)">
+    <mxGraphModel dx="1200" dy="800" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1169" pageHeight="827" math="0" shadow="0">
+      <root>
+        <mxCell id="0" />
+        <mxCell id="1" parent="0" />
+
+        <mxCell id="titulo" value="&lt;b&gt;Servicio de mensajería instantánea · SD-Jaune-Asencio&lt;/b&gt;&lt;br&gt;Mecanismo elegido: gRPC (semana-11/laboratorio/docker-compose.yml)" style="text;html=1;align=left;verticalAlign=middle;fontSize=14;" vertex="1" parent="1">
+          <mxGeometry x="40" y="20" width="700" height="40" as="geometry" />
+        </mxCell>
+
+        <mxCell id="host" value="Computador anfitrión · Windows 11 + Docker Desktop" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#f5f5f5;strokeColor=#666666;verticalAlign=top;align=left;spacingLeft=10;spacingTop=6;fontStyle=1;" vertex="1" parent="1">
+          <mxGeometry x="40" y="80" width="1080" height="560" as="geometry" />
+        </mxCell>
+
+        <mxCell id="red" value="Red Docker bridge &lt;b&gt;sd_net&lt;/b&gt; (resolución por nombre de servicio)" style="rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;verticalAlign=top;align=left;spacingLeft=10;spacingTop=6;" vertex="1" parent="1">
+          <mxGeometry x="80" y="130" width="780" height="470" as="geometry" />
+        </mxCell>
+
+        <mxCell id="cliente" value="&lt;b&gt;cliente&lt;/b&gt; / sd_cliente&lt;br&gt;imagen sd_grpc:semana11&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;cliente_grpc.py · MensajeriaStub&lt;br&gt;TIMEOUT_CLIENTE=2 s (deadline)&lt;br&gt;REINTENTOS=0 (configurable)&lt;br&gt;id_solicitud = uuid4()[:8]&lt;/font&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#fff2cc;strokeColor=#d6b656;" vertex="1" parent="1">
+          <mxGeometry x="120" y="260" width="220" height="140" as="geometry" />
+        </mxCell>
+
+        <mxCell id="servidor" value="&lt;b&gt;servidor&lt;/b&gt; / sd_servidor&lt;br&gt;imagen sd_grpc:semana11&lt;br&gt;&lt;font style=&quot;font-size:11px&quot;&gt;servidor_grpc.py · MensajeriaServicer&lt;br&gt;escucha 0.0.0.0:50051&lt;br&gt;FALLA / DEMORA / DEDUP por entorno&lt;/font&gt;" style="rounded=0;whiteSpace=wrap;html=1;fillColor=#d5e8d4;strokeColor=#82b366;" vertex="1" parent="1">
+          <mxGeometry x="560" y="260" width="240" height="140" as="geometry" />
+        </mxCell>
+
+        <mxCell id="flecha-rpc" value="gRPC · HTTP/2 · Protocol Buffers&lt;br&gt;TCP 50051&lt;br&gt;/mensajeria.v1.Mensajeria/{Usuarios, Enviar, Leer, Registrar}" style="endArrow=classic;html=1;rounded=0;strokeWidth=2;fontSize=11;" edge="1" parent="1" source="cliente" target="servidor">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="nota-estado" value="&lt;b&gt;Estado (en memoria del proceso)&lt;/b&gt;&lt;br&gt;dominio.py: usuarios → pendientes,&lt;br&gt;buzon → lista FIFO de 'origen:texto'&lt;br&gt;servidor_grpc.py: _vistas (id_solicitud → respuesta) si DEDUP=1&lt;br&gt;Se pierde al reiniciar el contenedor" style="shape=note;whiteSpace=wrap;html=1;size=14;fillColor=#ffe6cc;strokeColor=#d79b00;align=left;spacingLeft=6;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="560" y="440" width="280" height="110" as="geometry" />
+        </mxCell>
+        <mxCell id="enlace-estado" style="endArrow=none;dashed=1;html=1;" edge="1" parent="1" source="nota-estado" target="servidor">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="nota-concurrencia" value="&lt;b&gt;Concurrencia&lt;/b&gt;&lt;br&gt;grpc.server(ThreadPoolExecutor(max_workers=10))&lt;br&gt;threading.Lock en dominio.py&lt;br&gt;_dedup_lock en servidor_grpc.py" style="shape=note;whiteSpace=wrap;html=1;size=14;fillColor=#ffe6cc;strokeColor=#d79b00;align=left;spacingLeft=6;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="560" y="160" width="280" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="enlace-concurrencia" style="endArrow=none;dashed=1;html=1;" edge="1" parent="1" source="nota-concurrencia" target="servidor">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="nota-cliente" value="&lt;b&gt;Rol&lt;/b&gt;: origen de las llamadas.&lt;br&gt;Genera id_solicitud y lo repite&lt;br&gt;igual en cada reintento." style="shape=note;whiteSpace=wrap;html=1;size=14;fillColor=#ffffff;strokeColor=#999999;align=left;spacingLeft=6;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="120" y="440" width="220" height="70" as="geometry" />
+        </mxCell>
+        <mxCell id="enlace-cliente" style="endArrow=none;dashed=1;html=1;" edge="1" parent="1" source="nota-cliente" target="cliente">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="puerto-host" value="Puerto publicado&lt;br&gt;&lt;b&gt;50051 -&gt; 50051&lt;/b&gt;" style="ellipse;whiteSpace=wrap;html=1;fillColor=#e1d5e7;strokeColor=#9673a6;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="900" y="290" width="180" height="80" as="geometry" />
+        </mxCell>
+        <mxCell id="flecha-host" value="TCP 50051" style="endArrow=classic;html=1;rounded=0;dashed=1;fontSize=11;" edge="1" parent="1" source="puerto-host" target="servidor">
+          <mxGeometry relative="1" as="geometry" />
+        </mxCell>
+
+        <mxCell id="leyenda" value="Flecha: desde quien inicia la conexión. Rótulo: protocolo y puerto.&lt;br&gt;Volumen .:/app montado en ambos contenedores. Stubs generados con generar.sh (grpcio-tools 1.80.0)." style="text;html=1;align=left;verticalAlign=middle;fontSize=11;" vertex="1" parent="1">
+          <mxGeometry x="80" y="660" width="900" height="40" as="geometry" />
+        </mxCell>
+      </root>
+    </mxGraphModel>
+  </diagram>
+</mxfile>
